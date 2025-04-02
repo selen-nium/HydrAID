@@ -38,7 +38,10 @@ class BLEManager: NSObject, ObservableObject {
             self.isScanning = true
             self.discoveredDevices = []
             // Start scanning for devices with the specific service UUID
-            centralManager.scanForPeripherals(withServices: [serviceUUID], options: nil)
+//            centralManager.scanForPeripherals(withServices: [serviceUUID], options: nil)
+            
+            // scan for all BLE devices
+            centralManager.scanForPeripherals(withServices: nil, options: nil)
         }
     }
     

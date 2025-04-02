@@ -1,0 +1,39 @@
+# .gitignore for SwiftUI Project
+
+## Xcode and Swift specific ignores
+xcuserdata/
+*.xcscmblueprint
+*.xccheckout
+DerivedData/
+*.ipa
+*.dSYM
+*.dSYM.zip
+
+## Sensitive Configuration Files
+# Ignore Google Service Info files
+**/GoogleService-Info.plist
+
+## CocoaPods
+Pods/
+Podfile.lock
+
+## Carthage
+Carthage/Build/
+
+## Swift Package Manager
+Packages/
+Package.resolved
+
+## macOS system files
+.DS_Store
+.AppleDouble
+.LSOverride
+
+## API Keys and Secrets
+# Ignore any configuration files that might contain secrets
+**/Config.xcconfig
+**/Secrets.swift
+**/secrets.json
+
+## App specific ignores (customize as needed)
+# Add any app-specific file patterns you want to ignore
