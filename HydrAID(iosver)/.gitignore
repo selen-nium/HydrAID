@@ -1,0 +1,43 @@
+# Swift/Xcode specific .gitignore
+# Xcode
+#
+# gitignore contributors: remember to update Global/Xcode.gitignore, Objective-C.gitignore & Swift.gitignore
+
+## User settings
+xcuserdata/
+
+## Xcode temporary files
+*.xcscmblueprint
+*.xccheckout
+
+## Compilation
+*.moved-aside
+DerivedData/
+*.ipa
+*.dSYM
+*.dSYM.zip
+
+## Playgrounds
+timeline.xctimeline
+playground.xcworkspace
+
+## Swift Package Manager
+Packages/
+Package.pins
+Package.resolved
+
+## CocoaPods
+Pods/
+
+## Carthage
+Carthage/Build
+
+## Artifacts
+*.app
+*.framework
+*.dylib
+
+## Various settings
+.idea/
+*.swp
+.DS_Store
