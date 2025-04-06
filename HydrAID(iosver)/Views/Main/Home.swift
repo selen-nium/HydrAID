@@ -1,13 +1,24 @@
-//
-//  Home.swift
-//  HydrAID(iosver)
-//
-//  Created by selen on 2025.04.02.
-//
 import SwiftUI
 import FirebaseAuth
 import FirebaseFirestore
 import Combine
+
+struct SensorData {
+    var hydration: HydrationData
+    var sugar: SugarData
+    
+    struct HydrationData {
+        var percentage: Double
+        var weight: Double
+        var max: Double
+    }
+    
+    struct SugarData {
+        var percentage: Double
+        var weight: Double
+        var max: Double
+    }
+}
 
 struct IntakeRecommendations {
     var water: WaterRecommendation
@@ -38,9 +49,13 @@ struct HomeView: View {
     @State private var userName: String = "User"
     @State private var profileData: ProfileData? = nil
     @State private var cancellables = Set<AnyCancellable>()
+    @State private var sensorData = SensorData(
+        hydration: SensorData.HydrationData(percentage: 0, weight: 0, max: 2500),
+        sugar: SensorData.SugarData(percentage: 0, weight: 0, max: 25)
+    )
     
-//    @Published var profileData: ProfileData? = nil
     private let weatherService = WeatherService()
+    private let dailyUpdateTimer = Timer.publish(every: 86400, on: .main, in: .common).autoconnect()
     
     var body: some View {
         NavigationView {
@@ -73,16 +88,18 @@ struct HomeView: View {
                     .padding(.horizontal)
                     
                     // Hydration tracker
-                    HydrationTrackerView(
+                    HydrationTrackerViewBLE(
                         recommendedIntake: recommendations.water.recommendedLiters,
-                        adjustmentFactors: recommendations.water.adjustmentFactors
+                        adjustmentFactors: recommendations.water.adjustmentFactors,
+                        sensorData: sensorData.hydration
                     )
                     .padding(.horizontal)
                     
                     // Sugar intake tracker
-                    SugarIntakeTrackerView(
+                    SugarIntakeTrackerViewBLE(
                         recommendedLimit: recommendations.sugar.recommendedGrams,
-                        adjustmentFactors: recommendations.sugar.adjustmentFactors
+                        adjustmentFactors: recommendations.sugar.adjustmentFactors,
+                        sensorData: sensorData.sugar
                     )
                     .padding(.horizontal)
                     
@@ -93,9 +110,9 @@ struct HomeView: View {
                         error: errorMessage
                     )
                     .padding(.horizontal)
-                    
-                    // BLE sensor data placeholder
-                    BLESensorView()
+
+                    // BLE connection view
+                    BLEConnectionView()
                         .padding(.horizontal)
                     
                     // Bottom padding for better scrolling
@@ -104,10 +121,10 @@ struct HomeView: View {
             }
             .navigationBarTitle("HydrAID", displayMode: .inline)
             .navigationBarItems(trailing:
-                                    Button(action: signOut) {
-                Text("Sign Out")
-                    .foregroundColor(.red)
-            }
+                Button(action: signOut) {
+                    Text("Sign Out")
+                        .foregroundColor(.red)
+                }
             )
             .refreshable {
                 await refreshDataAsync()
@@ -116,9 +133,15 @@ struct HomeView: View {
                 loadUserData()
                 loadWeatherData()
                 calculateRecommendations()
+                setupBLENotifications()
+                scheduleOptimalIntakeUpdate()
             }
             .onChange(of: profileData) { newValue in
                 calculateRecommendations()
+                updateOptimalIntakeLevels()
+            }
+            .onReceive(dailyUpdateTimer) { _ in
+                updateOptimalIntakeLevels()
             }
         }
     }
@@ -144,6 +167,13 @@ struct HomeView: View {
             
             loadUserData()
             calculateRecommendations()
+            updateOptimalIntakeLevels()
+            
+            // Request current readings from BLE device
+            if bleManager.connectionStatus == .connected {
+                bleManager.requestCurrentReadings()
+            }
+            
         } catch {
             errorMessage = "Failed to load weather data: \(error.localizedDescription)"
             print(errorMessage ?? "Unknown error")
@@ -226,6 +256,7 @@ struct HomeView: View {
             // Update profileData and trigger recommendations recalculation
             self.profileData = profile
             self.calculateRecommendations()
+            self.updateOptimalIntakeLevels()
         }
     }
 
@@ -276,14 +307,136 @@ struct HomeView: View {
         print("Water Factors: \(recommendations.water.adjustmentFactors)")
         print("Sugar Factors: \(recommendations.sugar.adjustmentFactors)")
     }
+    
+    // MARK: - BLE Integration
+    
+    private func setupBLENotifications() {
+        // Listen for BLE messages
+        NotificationCenter.default.addObserver(
+            forName: .newBLEMessageReceived,
+            object: nil,
+            queue: .main
+        ) { notification in
+            if let message = notification.object as? String {
+                self.processBLEMessage(message)
+            }
+        }
+        
+        // Listen for BLE connection changes
+        NotificationCenter.default.addObserver(
+            forName: .bleConnectionChanged,
+            object: nil,
+            queue: .main
+        ) { notification in
+            if let isConnected = notification.object as? Bool, isConnected {
+                // Request current sensor readings when connected
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                    self.bleManager.requestCurrentReadings()
+                }
+            }
+        }
+    }
+    
+    private func processBLEMessage(_ message: String) {
+        print("Processing BLE message: \(message)")
+        
+        do {
+            if let data = message.data(using: .utf8),
+               let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                
+                // Check if this is a hydration/sugar reading
+                if let hydration = json["hydration"] as? [String: Any],
+                   let sugar = json["sugar"] as? [String: Any] {
+                    
+                    // Update hydration data
+                    if let percentage = hydration["percentage"] as? Double,
+                       let weight = hydration["weight"] as? Double,
+                       let max = hydration["max"] as? Double {
+                        
+                        self.sensorData.hydration = SensorData.HydrationData(
+                            percentage: percentage,
+                            weight: weight,
+                            max: max
+                        )
+                    }
+                    
+                    // Update sugar data
+                    if let percentage = sugar["percentage"] as? Double,
+                       let weight = sugar["weight"] as? Double,
+                       let max = sugar["max"] as? Double {
+                        
+                        self.sensorData.sugar = SensorData.SugarData(
+                            percentage: percentage,
+                            weight: weight,
+                            max: max
+                        )
+                    }
+                    
+                    print("Updated sensor data: Hydration: \(self.sensorData.hydration.weight)ml, Sugar: \(self.sensorData.sugar.weight)g")
+                }
+            }
+        } catch {
+            print("Error parsing BLE message: \(error)")
+        }
+    }
+    
+    private func updateOptimalIntakeLevels() {
+        // Send optimal levels to the ESP32
+        bleManager.updateOptimalLevels(
+            waterLiters: recommendations.water.recommendedLiters,
+            sugarGrams: recommendations.sugar.recommendedGrams
+        )
+        
+        print("🔄 Updated optimal intake levels on ESP32:")
+        print("Water: \(recommendations.water.recommendedLiters) L")
+        print("Sugar: \(recommendations.sugar.recommendedGrams) g")
+    }
+    
+    private func scheduleOptimalIntakeUpdate() {
+        // Create a daily timer to update the device at 23:59
+        let now = Date()
+        let calendar = Calendar.current
+        
+        // Set up components for 23:59 today
+        var components = calendar.dateComponents([.year, .month, .day], from: now)
+        components.hour = 23
+        components.minute = 59
+        components.second = 0
+        
+        guard let targetTime = calendar.date(from: components) else {
+            print("Failed to create target time for scheduler")
+            return
+        }
+        
+        // If it's already past 23:59, schedule for tomorrow
+        var scheduledTime = targetTime
+        if now > targetTime {
+            scheduledTime = calendar.date(byAdding: .day, value: 1, to: targetTime) ?? targetTime
+        }
+        
+        // Calculate seconds until the scheduled time
+        let timeInterval = scheduledTime.timeIntervalSince(now)
+        
+        print("Scheduling optimal intake update at: \(scheduledTime)")
+        print("Time until update: \(timeInterval) seconds")
+        
+        // Schedule the one-time timer
+        Timer.scheduledTimer(withTimeInterval: timeInterval, repeats: false) { _ in
+            // Update the optimal levels
+            self.updateOptimalIntakeLevels()
+            
+            // Schedule for the next day
+            self.scheduleOptimalIntakeUpdate()
+        }
+    }
 }
 
-// MARK: - Component Views
+// MARK: - Updated Component Views for BLE Integration
 
-struct HydrationTrackerView: View {
+struct HydrationTrackerViewBLE: View {
     let recommendedIntake: Double
     let adjustmentFactors: [String]
-    @State private var currentIntake: Double = 0.0
+    let sensorData: SensorData.HydrationData
     
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -293,7 +446,7 @@ struct HydrationTrackerView: View {
             // Progress bar
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
-                    Text("\(Int(currentIntake * 1000)) ml")
+                    Text("\(Int(sensorData.weight)) ml")
                         .font(.title2)
                         .fontWeight(.bold)
                     
@@ -313,39 +466,41 @@ struct HydrationTrackerView: View {
                             .cornerRadius(5)
                         
                         Rectangle()
-                            .frame(width: min(CGFloat(currentIntake / recommendedIntake) * geometry.size.width, geometry.size.width), height: 10)
+                            .frame(width: min(CGFloat(sensorData.percentage / 100) * geometry.size.width, geometry.size.width), height: 10)
                             .foregroundColor(.blue)
                             .cornerRadius(5)
-                            .animation(.linear, value: currentIntake)
+                            .animation(.linear, value: sensorData.percentage)
                     }
                 }
                 .frame(height: 10)
             }
             
-            // Add water buttons
-            HStack(spacing: 8) {
-                ForEach([0.1, 0.25, 0.5], id: \.self) { amount in
-                    Button(action: {
-                        currentIntake = min(currentIntake + amount, recommendedIntake * 1.5)
-                    }) {
-                        Text("+\(Int(amount * 1000)) ml")
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 8)
-                            .background(Color.blue.opacity(0.2))
-                            .foregroundColor(.blue)
-                            .cornerRadius(8)
-                    }
-                }
+            // Status information
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Current status:")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
                 
-                Button(action: {
-                    currentIntake = 0
-                }) {
-                    Text("Reset")
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
-                        .background(Color.red.opacity(0.2))
+                if sensorData.percentage >= 100 {
+                    Text("Great job! You've reached your hydration goal.")
+                        .font(.callout)
+                        .foregroundColor(.green)
+                } else if sensorData.percentage >= 75 {
+                    Text("You're doing well! Almost at your daily goal.")
+                        .font(.callout)
+                        .foregroundColor(.green)
+                } else if sensorData.percentage >= 50 {
+                    Text("Halfway there! Keep drinking water.")
+                        .font(.callout)
+                        .foregroundColor(.orange)
+                } else if sensorData.percentage >= 25 {
+                    Text("You need more water. Try to drink more frequently.")
+                        .font(.callout)
+                        .foregroundColor(.orange)
+                } else {
+                    Text("You're dehydrated! Please increase your water intake.")
+                        .font(.callout)
                         .foregroundColor(.red)
-                        .cornerRadius(8)
                 }
             }
             
@@ -374,10 +529,10 @@ struct HydrationTrackerView: View {
     }
 }
 
-struct SugarIntakeTrackerView: View {
+struct SugarIntakeTrackerViewBLE: View {
     let recommendedLimit: Double
     let adjustmentFactors: [String]
-    @State private var currentIntake: Double = 0.0
+    let sensorData: SensorData.SugarData
     
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -387,7 +542,7 @@ struct SugarIntakeTrackerView: View {
             // Progress bar
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
-                    Text("\(Int(currentIntake)) g")
+                    Text("\(Int(sensorData.weight)) g")
                         .font(.title2)
                         .fontWeight(.bold)
                     
@@ -407,39 +562,37 @@ struct SugarIntakeTrackerView: View {
                             .cornerRadius(5)
                         
                         Rectangle()
-                            .frame(width: min(CGFloat(currentIntake / recommendedLimit) * geometry.size.width, geometry.size.width), height: 10)
-                            .foregroundColor(currentIntake > recommendedLimit ? .red : .orange)
+                            .frame(width: min(CGFloat(sensorData.percentage / 100) * geometry.size.width, geometry.size.width), height: 10)
+                            .foregroundColor(sensorData.percentage > 100 ? .red : .orange)
                             .cornerRadius(5)
-                            .animation(.linear, value: currentIntake)
+                            .animation(.linear, value: sensorData.percentage)
                     }
                 }
                 .frame(height: 10)
             }
             
-            // Add sugar buttons
-            HStack(spacing: 8) {
-                ForEach([5.0, 10.0, 15.0], id: \.self) { amount in
-                    Button(action: {
-                        currentIntake = min(currentIntake + amount, recommendedLimit * 2)
-                    }) {
-                        Text("+\(Int(amount)) g")
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 8)
-                            .background(Color.orange.opacity(0.2))
-                            .foregroundColor(.orange)
-                            .cornerRadius(8)
-                    }
-                }
+            // Status information
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Current status:")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
                 
-                Button(action: {
-                    currentIntake = 0
-                }) {
-                    Text("Reset")
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
-                        .background(Color.red.opacity(0.2))
+                if sensorData.percentage > 100 {
+                    Text("Warning! You've exceeded your recommended sugar limit.")
+                        .font(.callout)
                         .foregroundColor(.red)
-                        .cornerRadius(8)
+                } else if sensorData.percentage >= 75 {
+                    Text("You're approaching your daily sugar limit.")
+                        .font(.callout)
+                        .foregroundColor(.orange)
+                } else if sensorData.percentage >= 50 {
+                    Text("Moderate sugar intake so far today.")
+                        .font(.callout)
+                        .foregroundColor(.orange)
+                } else {
+                    Text("Good job! Your sugar intake is within healthy limits.")
+                        .font(.callout)
+                        .foregroundColor(.green)
                 }
             }
             
@@ -544,70 +697,6 @@ struct WeatherInfoView: View {
     }
 }
 
-struct BLESensorView: View {
-    @EnvironmentObject var bleManager: BLEManager
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Device Sensors")
-                .font(.headline)
-            
-            VStack(spacing: 12) {
-                HStack {
-                    Image(systemName: "wave.3.right")
-                        .font(.title2)
-                        .foregroundColor(.blue)
-                        .frame(width: 40, height: 40)
-                    
-                    VStack(alignment: .leading) {
-                        Text("Water Flow")
-                            .font(.subheadline)
-                        Text("0.5 L / min")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    
-                    Spacer()
-                    
-                    Text("Connected")
-                        .font(.caption)
-                        .padding(6)
-                        .background(Color.green.opacity(0.2))
-                        .foregroundColor(.green)
-                        .cornerRadius(12)
-                }
-                
-                HStack {
-                    Image(systemName: "drop.fill")
-                        .font(.title2)
-                        .foregroundColor(.blue)
-                        .frame(width: 40, height: 40)
-                    
-                    VStack(alignment: .leading) {
-                        Text("Water Quality")
-                            .font(.subheadline)
-                        Text("Clean")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    
-                    Spacer()
-                    
-                    Text("Good")
-                        .font(.caption)
-                        .padding(6)
-                        .background(Color.green.opacity(0.2))
-                        .foregroundColor(.green)
-                        .cornerRadius(12)
-                }
-            }
-            .padding()
-        }
-        .padding()
-        .background(Color(.systemGray6))
-        .cornerRadius(12)
-    }
-}
 
 struct HomeView_Previews: PreviewProvider {
     static var previews: some View {

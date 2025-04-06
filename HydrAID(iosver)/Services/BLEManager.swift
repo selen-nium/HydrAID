@@ -1,9 +1,3 @@
-//
-//  BLEManager.swift
-//  HydrAID(iosver)
-//
-//  Updated on 2025.04.06.
-//
 import Foundation
 import CoreBluetooth
 import Combine
@@ -12,9 +6,10 @@ import Combine
 extension Notification.Name {
     static let newBLEMessageReceived = Notification.Name("newBLEMessageReceived")
     static let bleConnectionChanged = Notification.Name("bleConnectionChanged")
+    static let dailyOptimalIntakeUpdate = Notification.Name("dailyOptimalIntakeUpdate")
 }
 
-class BLEManager: NSObject, ObservableObject {
+class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     // Published properties for SwiftUI to observe
     @Published var isScanning = false
     @Published var connectedDevice: CBPeripheral?
@@ -22,9 +17,10 @@ class BLEManager: NSObject, ObservableObject {
     @Published var lastMessage: String = ""
     @Published var connectionStatus: ConnectionStatus = .disconnected
     @Published var deviceBatteryLevel: Int = 100
+    @Published var lastSensorData: [String: Any] = [:]
     
     // Connection status enum
-    enum ConnectionStatus {
+    enum ConnectionStatus : Equatable {
         case disconnected
         case scanning
         case connecting
@@ -46,13 +42,21 @@ class BLEManager: NSObject, ObservableObject {
     private var txCharacteristic: CBCharacteristic?
     
     // Reconnection properties
-    private var shouldAutoReconnect = false
+    private var shouldAutoReconnect = true  // Set to true by default
     private var reconnectTimer: Timer?
     private var lastConnectedDeviceIdentifier: UUID?
+    
+    // Optimal intake values
+    private var optimalWaterIntake: Double = 2.5  // Default in liters
+    private var optimalSugarIntake: Double = 25   // Default in grams
+    
+    // Daily update timer
+    private var dailyUpdateTimer: Timer?
     
     override init() {
         super.init()
         self.centralManager = CBCentralManager(delegate: self, queue: nil)
+        setupDailyUpdateScheduler()
     }
     
     // MARK: - Basic BLE Operations
@@ -143,6 +147,7 @@ class BLEManager: NSObject, ObservableObject {
     func sendMessage(_ message: String) {
         if let data = message.data(using: .utf8) {
             sendData(data)
+            print("Sent to device: \(message)")
         }
     }
     
@@ -159,11 +164,73 @@ class BLEManager: NSObject, ObservableObject {
         }
     }
     
+    // MARK: - Daily Update Scheduler
+    
+    private func setupDailyUpdateScheduler() {
+        // Schedule daily updates at 23:59
+        let now = Date()
+        let calendar = Calendar.current
+        
+        // Set up components for 23:59 today
+        var components = calendar.dateComponents([.year, .month, .day], from: now)
+        components.hour = 23
+        components.minute = 59
+        components.second = 0
+        
+        guard let targetTime = calendar.date(from: components) else {
+            print("Failed to create target time for scheduler")
+            return
+        }
+        
+        // If it's already past 23:59, schedule for tomorrow
+        var scheduledTime = targetTime
+        if now > targetTime {
+            scheduledTime = calendar.date(byAdding: .day, value: 1, to: targetTime) ?? targetTime
+        }
+        
+        // Calculate seconds until the scheduled time
+        let timeInterval = scheduledTime.timeIntervalSince(now)
+        
+        print("BLEManager: Scheduling daily update at: \(scheduledTime)")
+        print("BLEManager: Time until update: \(timeInterval) seconds")
+        
+        // Schedule the one-time timer
+        dailyUpdateTimer = Timer.scheduledTimer(withTimeInterval: timeInterval, repeats: false) { [weak self] _ in
+            // Send notification for daily update
+            NotificationCenter.default.post(
+                name: .dailyOptimalIntakeUpdate,
+                object: nil
+            )
+            
+            // If we have current optimal values, update the device
+            if let self = self, self.connectionStatus == .connected {
+                self.updateOptimalLevels(
+                    waterLiters: self.optimalWaterIntake,
+                    sugarGrams: self.optimalSugarIntake
+                )
+            }
+            
+            // Reschedule for next day
+            self?.setupDailyUpdateScheduler()
+        }
+    }
+    
     // MARK: - ESP32 Specific Commands
     
     // Process incoming message from the ESP32 device
     func processIncomingMessage(_ message: String) {
         self.lastMessage = message
+        
+        // Try to parse as JSON
+        do {
+            if let data = message.data(using: .utf8),
+               let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                // Store the last sensor data
+                self.lastSensorData = json
+            }
+        } catch {
+            print("Error parsing JSON from device: \(error)")
+        }
         
         // Post notification so other components can react to new data
         NotificationCenter.default.post(
@@ -217,19 +284,82 @@ class BLEManager: NSObject, ObservableObject {
     
     // Send the optimal levels to the device
     func updateOptimalLevels(waterLiters: Double, sugarGrams: Double) {
+        // Store the optimal values for future use
+        self.optimalWaterIntake = waterLiters
+        self.optimalSugarIntake = sugarGrams
+        
+        // Format water intake in milliliters for the ESP32
+        let waterMilliliters = waterLiters * 1000
+        
         let updateCommand = """
         {
-            "update": {
-                "water": {
-                    "max": \(waterLiters * 1000)
-                },
-                "sugar": {
-                    "max": \(sugarGrams)
-                }
+            "command": "update_optimal",
+            "water": {
+                "max": \(waterMilliliters)
+            },
+            "sugar": {
+                "max": \(sugarGrams)
             }
         }
         """
         self.sendMessage(updateCommand)
+        
+        print("Updated optimal levels on device:")
+        print("Water: \(waterMilliliters) ml")
+        print("Sugar: \(sugarGrams) g")
+    }
+    
+    // Schedule daily update for a specific time (23:59 by default)
+    func scheduleDailyUpdate(hour: Int = 23, minute: Int = 59) {
+        // Cancel any existing timer
+        dailyUpdateTimer?.invalidate()
+        
+        // Create new schedule
+        let now = Date()
+        let calendar = Calendar.current
+        
+        // Set up components for the target time today
+        var components = calendar.dateComponents([.year, .month, .day], from: now)
+        components.hour = hour
+        components.minute = minute
+        components.second = 0
+        
+        guard let targetTime = calendar.date(from: components) else {
+            print("Failed to create target time for scheduler")
+            return
+        }
+        
+        // If it's already past target time, schedule for tomorrow
+        var scheduledTime = targetTime
+        if now > targetTime {
+            scheduledTime = calendar.date(byAdding: .day, value: 1, to: targetTime) ?? targetTime
+        }
+        
+        // Calculate seconds until the scheduled time
+        let timeInterval = scheduledTime.timeIntervalSince(now)
+        
+        print("BLEManager: Scheduling daily update at: \(scheduledTime)")
+        print("BLEManager: Time until update: \(timeInterval) seconds")
+        
+        // Schedule the one-time timer
+        dailyUpdateTimer = Timer.scheduledTimer(withTimeInterval: timeInterval, repeats: false) { [weak self] _ in
+            // Send notification for daily update
+            NotificationCenter.default.post(
+                name: .dailyOptimalIntakeUpdate,
+                object: nil
+            )
+            
+            // If we have current optimal values, update the device
+            if let self = self, self.connectionStatus == .connected {
+                self.updateOptimalLevels(
+                    waterLiters: self.optimalWaterIntake,
+                    sugarGrams: self.optimalSugarIntake
+                )
+            }
+            
+            // Reschedule for next day
+            self?.scheduleDailyUpdate(hour: hour, minute: minute)
+        }
     }
     
     // Get device battery level
@@ -273,10 +403,19 @@ class BLEManager: NSObject, ObservableObject {
             print("Error parsing battery info: \(error)")
         }
     }
-}
-
-// MARK: - CBCentralManagerDelegate
-extension BLEManager: CBCentralManagerDelegate {
+    
+    // MARK: - Device Data Reset Methods
+    
+    // Reset all measurements at midnight
+    func resetDailyMeasurements() {
+        // Reset measurements in the device
+        resetDeviceMeasurements()
+        
+        print("Daily measurements reset on device")
+    }
+    
+    // MARK: - CBCentralManagerDelegate Methods
+    
     // Called when the central manager's state updates
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
         switch central.state {
@@ -369,10 +508,9 @@ extension BLEManager: CBCentralManagerDelegate {
             object: false
         )
     }
-}
-
-// MARK: - CBPeripheralDelegate
-extension BLEManager: CBPeripheralDelegate {
+    
+    // MARK: - CBPeripheralDelegate Methods
+    
     // Called when services are discovered
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
         guard error == nil else {
