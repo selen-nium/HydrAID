@@ -7,15 +7,7 @@
 import SwiftUI
 import FirebaseAuth
 import FirebaseFirestore
-
-// Models for data
-struct WeatherData {
-    var temperature: Double
-    var humidity: Double
-    var temperatureUnit: String
-    var humidityUnit: String
-    var timestamp: String
-}
+import Combine
 
 struct IntakeRecommendations {
     var water: WaterRecommendation
@@ -44,6 +36,11 @@ struct HomeView: View {
     @State private var isLoading = true
     @State private var errorMessage: String? = nil
     @State private var userName: String = "User"
+    @State private var profileData: ProfileData? = nil
+    @State private var cancellables = Set<AnyCancellable>()
+    
+//    @Published var profileData: ProfileData? = nil
+    private let weatherService = WeatherService()
     
     var body: some View {
         NavigationView {
@@ -107,10 +104,10 @@ struct HomeView: View {
             }
             .navigationBarTitle("HydrAID", displayMode: .inline)
             .navigationBarItems(trailing:
-                Button(action: signOut) {
-                    Text("Sign Out")
-                        .foregroundColor(.red)
-                }
+                                    Button(action: signOut) {
+                Text("Sign Out")
+                    .foregroundColor(.red)
+            }
             )
             .refreshable {
                 await refreshDataAsync()
@@ -118,6 +115,9 @@ struct HomeView: View {
             .onAppear {
                 loadUserData()
                 loadWeatherData()
+                calculateRecommendations()
+            }
+            .onChange(of: profileData) { newValue in
                 calculateRecommendations()
             }
         }
@@ -136,13 +136,18 @@ struct HomeView: View {
     
     private func refreshDataAsync() async {
         isLoading = true
+        errorMessage = nil
         
-        // Simulate API calls
-        try? await Task.sleep(nanoseconds: 1_500_000_000) // 1.5 seconds
-        
-        loadUserData()
-        loadWeatherData()
-        calculateRecommendations()
+        do {
+            // Fetch weather data
+            weatherData = try await weatherService.getLatestWeatherData()
+            
+            loadUserData()
+            calculateRecommendations()
+        } catch {
+            errorMessage = "Failed to load weather data: \(error.localizedDescription)"
+            print(errorMessage ?? "Unknown error")
+        }
         
         isLoading = false
     }
@@ -157,55 +162,119 @@ struct HomeView: View {
             userName = email.components(separatedBy: "@").first ?? "User"
         }
         
-        // Load user profile from Firestore
-        let db = Firestore.firestore()
-        db.collection("users").document(user.uid).getDocument { snapshot, error in
-            if let error = error {
-                print("Error fetching user profile: \(error.localizedDescription)")
-                return
-            }
-            
-            guard let data = snapshot?.data() else { return }
-            
-            // Use user profile data to calculate personalized recommendations
-            // This is just a placeholder - you would implement your actual calculation logic
-            calculateRecommendations()
-        }
+        // Explicitly load profile data
+        loadProfileData()
     }
     
     private func loadWeatherData() {
-        // Simulate fetching weather data
-        // In a real app, you would call your weather API here
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-            // Sample data
-            weatherData = WeatherData(
-                temperature: 28.5,
-                humidity: 65.0,
-                temperatureUnit: "°C",
-                humidityUnit: "%",
-                timestamp: ISO8601DateFormatter().string(from: Date())
-            )
-            
-            isLoading = false
+        Task {
+            do {
+                weatherData = try await weatherService.getLatestWeatherData()
+                
+                print("🌈 Weather Data Loaded:")
+                print("Temperature: \(weatherData?.temperature ?? 0)°C")
+                print("Humidity: \(weatherData?.humidity ?? 0)%")
+                
+                // Recalculate recommendations if profile data is already loaded
+                calculateRecommendations()
+                
+                isLoading = false
+            } catch {
+                errorMessage = "Failed to load weather data: \(error.localizedDescription)"
+                isLoading = false
+                print("❌ Weather Data Load Error: \(error)")
+                
+                // Even if weather data fails, try to calculate recommendations
+                calculateRecommendations()
+            }
         }
     }
-    
-    private func calculateRecommendations() {
-        // Simulate calculating personalized recommendations
-        // In a real app, you would implement your actual calculation logic from the React Native version
         
-        // Example adjustment
-        if let weather = weatherData, weather.temperature > 25 {
-            recommendations.water.recommendedLiters = 3.0
-            recommendations.water.adjustmentFactors = ["High temperature", "Increased activity"]
-        } else {
-            recommendations.water.recommendedLiters = 2.5
-            recommendations.water.adjustmentFactors = ["Normal conditions"]
+    @MainActor
+    private func loadProfileData() {
+        guard let userId = Auth.auth().currentUser?.uid else { return }
+        
+        let db = Firestore.firestore()
+        db.collection("users").document(userId).getDocument { [self] snapshot, error in
+            if let error = error {
+                print("❌ Error fetching user profile: \(error.localizedDescription)")
+                return
+            }
+            
+            guard let data = snapshot?.data() else {
+                print("❌ No user data found")
+                return
+            }
+            
+            var profile = ProfileData()
+            profile.name = data["name"] as? String ?? ""
+            profile.gender = data["gender"] as? String ?? ""
+            profile.weight = data["weight"] as? String ?? ""
+            profile.age = data["age"] as? String ?? ""
+            profile.activityLevel = data["activityLevel"] as? String ?? ""
+            profile.healthConditions = data["healthConditions"] as? [String] ?? []
+            profile.medications = data["medications"] as? [String] ?? []
+            
+            print("🔍 Loaded Profile Data:")
+            print("Name: \(profile.name)")
+            print("Weight: \(profile.weight)")
+            print("Age: \(profile.age)")
+            print("Activity Level: \(profile.activityLevel)")
+            print("Health Conditions: \(profile.healthConditions)")
+            print("Medications: \(profile.medications)")
+            
+            // Update profileData and trigger recommendations recalculation
+            self.profileData = profile
+            self.calculateRecommendations()
+        }
+    }
+
+    private func calculateRecommendations() {
+        guard let profile = profileData else {
+            print("❌ Profile data is missing")
+            // Reset to default if profile data is incomplete
+            recommendations.water = IntakeRecommendations.WaterRecommendation(
+                recommendedLiters: 2.5,
+                adjustmentFactors: ["Default recommendation"]
+            )
+            recommendations.sugar = IntakeRecommendations.SugarRecommendation(
+                recommendedGrams: 25,
+                adjustmentFactors: ["Default recommendation"]
+            )
+            return
         }
         
-        // Sugar recommendations
-        recommendations.sugar.recommendedGrams = 25.0
-        recommendations.sugar.adjustmentFactors = ["Health conditions", "Dietary goals"]
+        // If weather data is not available, use a default weather object
+        let weather = weatherData ?? WeatherData(
+            temperature: 25.0,  // Default moderate temperature
+            humidity: 50.0,     // Default moderate humidity
+            location: "Default",
+            timestamp: Date().ISO8601Format(),
+            temperatureUnit: "°C",
+            humidityUnit: "%"
+        )
+        
+        print("🌞 Calculating Recommendations with:")
+        print("Weather: \(weather.temperature)°C, \(weather.humidity)%")
+        print("Profile Weight: \(profile.weight)")
+        print("Profile Age: \(profile.age)")
+        print("Profile Activity: \(profile.activityLevel)")
+        
+        // Calculate water intake
+        recommendations.water = IntakeCalculator.calculateWaterIntake(
+            weatherData: weather,
+            profileData: profile
+        )
+        
+        // Calculate sugar intake
+        recommendations.sugar = IntakeCalculator.calculateSugarIntake(
+            profileData: profile
+        )
+        
+        print("💧 Water Recommendation: \(recommendations.water.recommendedLiters) L")
+        print("🍬 Sugar Recommendation: \(recommendations.sugar.recommendedGrams) g")
+        print("Water Factors: \(recommendations.water.adjustmentFactors)")
+        print("Sugar Factors: \(recommendations.sugar.adjustmentFactors)")
     }
 }
 
@@ -430,9 +499,9 @@ struct WeatherInfoView: View {
                     // Temperature
                     VStack {
                         HStack(alignment: .top, spacing: 2) {
-                            Text("\(Int(weather.temperature))")
+                            Text("\(Int(weather.temperature ?? 0))")
                                 .font(.system(size: 40, weight: .medium))
-                            Text(weather.temperatureUnit)
+                            Text("°C")
                                 .font(.headline)
                                 .padding(.top, 5)
                         }
@@ -449,9 +518,9 @@ struct WeatherInfoView: View {
                     // Humidity
                     VStack {
                         HStack(alignment: .top, spacing: 2) {
-                            Text("\(Int(weather.humidity))")
+                            Text("\(Int(weather.humidity ?? 0))")
                                 .font(.system(size: 40, weight: .medium))
-                            Text(weather.humidityUnit)
+                            Text("%")
                                 .font(.headline)
                                 .padding(.top, 5)
                         }

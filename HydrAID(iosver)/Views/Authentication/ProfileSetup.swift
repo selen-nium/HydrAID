@@ -8,7 +8,7 @@ import SwiftUI
 import FirebaseFirestore
 import FirebaseAuth
 
-struct ProfileData {
+struct ProfileData : Equatable {
     var name: String = ""
     var gender: String = ""
     var weight: String = ""
