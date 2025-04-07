@@ -1,5 +1,7 @@
 import SwiftUI
 import CoreBluetooth
+import FirebaseAuth
+import FirebaseFirestore
 
 // Extension to add our specific notification
 extension Notification.Name {
@@ -44,6 +46,15 @@ extension BLEManager {
 struct BLEConnectionView: View {
     @EnvironmentObject var bleManager: BLEManager
     @State private var isSearching = false
+    @State private var profileData: ProfileData? = nil
+    @State private var weatherData: WeatherData? = nil
+    @State private var isLoading = false
+    @State private var showAlert = false
+    @State private var alertTitle = ""
+    @State private var alertMessage = ""
+    
+    // Weather service for fetching current conditions
+    private let weatherService = WeatherService()
     
     // Fixed device name for elderly users
     private let deviceName = "HydrationTracker"
@@ -169,6 +180,22 @@ struct BLEConnectionView: View {
                         .background(Color.blue.opacity(0.15))
                         .cornerRadius(12)
                     }
+                    
+                    // NEW BUTTON: Update Optimal Intake Values
+                    Button(action: updateOptimalIntakes) {
+                        HStack {
+                            Image(systemName: "waveform.path.ecg")
+                                .font(.system(size: 20))
+                            Text("Update Optimal Intake Values")
+                                .font(.system(size: 18, weight: .medium))
+                        }
+                        .foregroundColor(.green)
+                        .padding()
+                        .frame(maxWidth: .infinity)
+                        .background(Color.green.opacity(0.15))
+                        .cornerRadius(12)
+                    }
+                    .padding(.top, 8)
                 }
             }
         }
@@ -183,6 +210,17 @@ struct BLEConnectionView: View {
                     startSearching()
                 }
             }
+            
+            // Fetch profile and weather data when view appears
+            fetchProfileData()
+            fetchWeatherData()
+        }
+        .alert(isPresented: $showAlert) {
+            Alert(
+                title: Text(alertTitle),
+                message: Text(alertMessage),
+                dismissButton: .default(Text("OK"))
+            )
         }
     }
     
@@ -322,5 +360,117 @@ struct BLEConnectionView: View {
                 isSearching = false
             }
         }
+    }
+    
+    // Fetch profile data from Firebase
+    private func fetchProfileData() {
+        guard let userId = Auth.auth().currentUser?.uid else {
+            alertTitle = "Error"
+            alertMessage = "User not authenticated"
+            showAlert = true
+            return
+        }
+        
+        isLoading = true
+        
+        let db = Firestore.firestore()
+        db.collection("users").document(userId).getDocument { snapshot, error in
+            isLoading = false
+            
+            if let error = error {
+                alertTitle = "Error"
+                alertMessage = "Failed to load profile: \(error.localizedDescription)"
+                showAlert = true
+                return
+            }
+            
+            guard let snapshot = snapshot, snapshot.exists, let data = snapshot.data() else {
+                alertTitle = "Error"
+                alertMessage = "Profile data not found"
+                showAlert = true
+                return
+            }
+            
+            var profile = ProfileData()
+            profile.name = data["name"] as? String ?? ""
+            profile.gender = data["gender"] as? String ?? ""
+            profile.weight = data["weight"] as? String ?? ""
+            profile.age = data["age"] as? String ?? ""
+            profile.activityLevel = data["activityLevel"] as? String ?? ""
+            profile.healthConditions = data["healthConditions"] as? [String] ?? []
+            profile.medications = data["medications"] as? [String] ?? []
+            
+            self.profileData = profile
+        }
+    }
+    
+    // Fetch current weather data
+    private func fetchWeatherData() {
+        Task {
+            do {
+                let weather = try await weatherService.getLatestWeatherData()
+                DispatchQueue.main.async {
+                    self.weatherData = weather
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    print("Weather fetch error: \(error)")
+                    // Silently fail for weather - not critical
+                }
+            }
+        }
+    }
+    
+    // Update optimal intake values and send to device
+    private func updateOptimalIntakes() {
+        isLoading = true
+        
+        // First ensure we have the latest profile data
+        fetchProfileData()
+        
+        // Also get fresh weather data
+        fetchWeatherData()
+        
+        // Add small delay to ensure data is fetched
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            // Create default profile data if not available
+            let profile = self.profileData ?? self.createDefaultProfileData()
+            
+            // Calculate water intake
+            let waterRecommendation = IntakeCalculator.calculateWaterIntake(
+                weatherData: self.weatherData,
+                profileData: profile
+            )
+            
+            // Calculate sugar intake
+            let sugarRecommendation = IntakeCalculator.calculateSugarIntake(
+                profileData: profile
+            )
+            
+            // Send the updated values to the device
+            self.bleManager.updateOptimalLevels(
+                waterLiters: waterRecommendation.recommendedLiters,
+                sugarGrams: sugarRecommendation.recommendedGrams
+            )
+            
+            self.isLoading = false
+            
+            // Show confirmation to user
+            self.alertTitle = "Values Updated"
+            self.alertMessage = "Optimal intake values have been sent to your HydrAID Tumbler.\n\nWater: \(waterRecommendation.recommendedLiters) liters\nSugar: \(sugarRecommendation.recommendedGrams) grams"
+            self.showAlert = true
+        }
+    }
+    
+    // Helper function to create default profile data
+    private func createDefaultProfileData() -> ProfileData {
+        // Create a default profile with reasonable values
+        var profile = ProfileData()
+        profile.weight = "70" // Default weight in kg
+        profile.age = "50"    // Default age
+        profile.activityLevel = "Moderately Active"
+        profile.healthConditions = []
+        profile.medications = []
+        return profile
     }
 }
