@@ -1,9 +1,6 @@
-//
-//  Profile.swift
-//  HydrAID(iosver)
-//
-//  Created by selen on 2025.04.02.
-//
+import SwiftUI
+import FirebaseAuth
+import FirebaseFirestore
 
 import SwiftUI
 import FirebaseAuth
@@ -51,8 +48,10 @@ struct ProfileView: View {
                 if isLoading {
                     VStack {
                         ProgressView()
+                            .scaleEffect(2.0)
                         Text("Loading profile...")
-                            .padding()
+                            .font(.system(size: 20))
+                            .padding(.top, 24)
                     }
                 } else if let data = isEditing ? editedData : profileData {
                     if isEditing {
@@ -62,14 +61,24 @@ struct ProfileView: View {
                     }
                 } else {
                     Text("Unable to load profile data")
+                        .font(.system(size: 20))
                 }
             }
             .navigationTitle(isEditing ? "Edit Profile" : "My Profile")
+            .navigationBarTitleDisplayMode(.large)
             .navigationBarItems(trailing: !isEditing ?
                 Button(action: {
                     isEditing = true
                 }) {
-                    Text("Edit")
+                    HStack {
+                        Image(systemName: "pencil")
+                        Text("Edit")
+                            .font(.system(size: 18, weight: .medium))
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(Color.blue.opacity(0.2))
+                    .cornerRadius(8)
                 } : nil
             )
             .onAppear {
@@ -77,9 +86,9 @@ struct ProfileView: View {
             }
             .alert(isPresented: $showAlert) {
                 Alert(
-                    title: Text(alertTitle),
-                    message: Text(alertMessage),
-                    dismissButton: .default(Text("OK"))
+                    title: Text(alertTitle).font(.system(size: 20, weight: .bold)),
+                    message: Text(alertMessage).font(.system(size: 18)),
+                    dismissButton: .default(Text("OK").font(.system(size: 18, weight: .medium)))
                 )
             }
         }
@@ -87,119 +96,172 @@ struct ProfileView: View {
     
     private func profileDetailView(data: ProfileData) -> some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 24) {
                 // Edit profile button at the top for easier access
                 Button(action: {
                     isEditing = true
                 }) {
-                    Text("Edit Profile")
-                        .foregroundColor(.white)
-                        .padding()
-                        .frame(maxWidth: .infinity)
-                        .background(Color.blue)
-                        .cornerRadius(8)
+                    HStack {
+                        Image(systemName: "pencil")
+                            .font(.system(size: 20))
+                        Text("Edit Profile")
+                            .font(.system(size: 20, weight: .medium))
+                    }
+                    .foregroundColor(.white)
+                    .padding()
+                    .frame(maxWidth: .infinity)
+                    .background(Color.blue)
+                    .cornerRadius(12)
                 }
                 .padding(.bottom, 10)
                 
-                // Profile info sections
-                profileInfoSection(title: "Name", value: data.name)
-                profileInfoSection(title: "Gender", value: data.gender.capitalized)
-                profileInfoSection(title: "Weight (kg)", value: data.weight)
-                profileInfoSection(title: "Age", value: data.age)
-                profileInfoSection(title: "Activity Level", value: data.activityLevel)
+                // Profile info sections with larger text and better contrast
+                profileInfoSection(icon: "person.fill", title: "Name", value: data.name)
+                profileInfoSection(icon: "person.fill.questionmark", title: "Gender", value: data.gender.capitalized)
+                profileInfoSection(icon: "scalemass.fill", title: "Weight", value: "\(data.weight) kg")
+                profileInfoSection(icon: "calendar", title: "Age", value: "\(data.age) years")
+                profileInfoSection(icon: "figure.walk", title: "Activity Level", value: data.activityLevel)
                 
                 // Health conditions section
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Health Conditions")
-                        .font(.headline)
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack {
+                        Image(systemName: "heart.text.square.fill")
+                            .font(.system(size: 24))
+                            .foregroundColor(.red)
+                        Text("Health Conditions")
+                            .font(.system(size: 22, weight: .bold))
+                    }
                     
                     if data.healthConditions.isEmpty {
                         Text("None specified")
+                            .font(.system(size: 18))
                             .foregroundColor(.secondary)
+                            .padding(.leading, 8)
                     } else {
                         ForEach(data.healthConditions, id: \.self) { condition in
-                            HStack(alignment: .top) {
+                            HStack(alignment: .top, spacing: 12) {
                                 Text("•")
+                                    .font(.system(size: 20))
+                                    .foregroundColor(.red)
                                 Text(condition)
+                                    .font(.system(size: 18))
                             }
+                            .padding(.vertical, 4)
                         }
                     }
                 }
-                .padding()
-                .background(Color(.systemGray6))
-                .cornerRadius(8)
+                .padding(20)
+                .background(Color.cardBackground)
+                .cornerRadius(12)
+                .shadow(color: Color.black.opacity(0.05), radius: 3, x: 0, y: 2)
                 
                 // Medications section
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Medications")
-                        .font(.headline)
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack {
+                        Image(systemName: "pills.fill")
+                            .font(.system(size: 24))
+                            .foregroundColor(.blue)
+                        Text("Medications")
+                            .font(.system(size: 22, weight: .bold))
+                    }
                     
                     if data.medications.isEmpty {
                         Text("None specified")
+                            .font(.system(size: 18))
                             .foregroundColor(.secondary)
+                            .padding(.leading, 8)
                     } else {
                         ForEach(data.medications, id: \.self) { medication in
-                            HStack(alignment: .top) {
+                            HStack(alignment: .top, spacing: 12) {
                                 Text("•")
+                                    .font(.system(size: 20))
+                                    .foregroundColor(.blue)
                                 Text(medication)
+                                    .font(.system(size: 18))
                             }
+                            .padding(.vertical, 4)
                         }
                     }
                 }
-                .padding()
-                .background(Color(.systemGray6))
-                .cornerRadius(8)
+                .padding(20)
+                .background(Color.cardBackground)
+                .cornerRadius(12)
+                .shadow(color: Color.black.opacity(0.05), radius: 3, x: 0, y: 2)
                 
                 // Sign out button
                 Button(action: {
                     authService.signOut()
                 }) {
-                    Text("Sign Out")
-                        .foregroundColor(.white)
-                        .padding()
-                        .frame(maxWidth: .infinity)
-                        .background(Color.red)
-                        .cornerRadius(8)
+                    HStack {
+                        Image(systemName: "rectangle.portrait.and.arrow.right")
+                            .font(.system(size: 20))
+                        Text("Sign Out")
+                            .font(.system(size: 20, weight: .medium))
+                    }
+                    .foregroundColor(.white)
+                    .padding()
+                    .frame(maxWidth: .infinity)
+                    .background(Color.red)
+                    .cornerRadius(12)
                 }
-                .padding(.top, 20)
+                .padding(.top, 24)
             }
-            .padding()
+            .padding(24)
+            // Support for system text size adjustments
         }
     }
     
-    private func profileInfoSection(title: String, value: String) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title)
-                .font(.headline)
-            Text(value)
-                .foregroundColor(.primary)
+    private func profileInfoSection(icon: String, title: String, value: String) -> some View {
+        HStack(spacing: 16) {
+            // Icon for visual aid
+            Image(systemName: icon)
+                .font(.system(size: 24))
+                .foregroundColor(.blue)
+                .frame(width: 36, height: 36)
+            
+            VStack(alignment: .leading, spacing: 8) {
+                Text(title)
+                    .font(.system(size: 18, weight: .medium))
+                    .foregroundColor(.secondary)
+                
+                Text(value.isEmpty ? "Not set" : value)
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundColor(.primary)
+            }
         }
-        .padding()
+        .padding(20)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.systemGray6))
-        .cornerRadius(8)
+        .background(Color.cardBackground)
+        .cornerRadius(12)
+        .shadow(color: Color.black.opacity(0.05), radius: 3, x: 0, y: 2)
     }
     
     private func editView(data: ProfileData) -> some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 28) {
                 // Name input
-                VStack(alignment: .leading) {
-                    Text("Name")
-                        .font(.headline)
-                    TextField("Name", text: Binding(
+                editField(
+                    icon: "person.fill",
+                    title: "Name",
+                    placeholder: "Your Name",
+                    value: Binding(
                         get: { self.editedData?.name ?? "" },
                         set: { self.editedData?.name = $0 }
-                    ))
-                    .padding()
-                    .background(Color(.systemGray6))
-                    .cornerRadius(8)
-                }
+                    )
+                )
                 
                 // Gender picker
-                VStack(alignment: .leading) {
-                    Text("Gender")
-                        .font(.headline)
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Image(systemName: "person.fill.questionmark")
+                            .font(.system(size: 24))
+                            .foregroundColor(.blue)
+                            .frame(width: 36, height: 36)
+                        
+                        Text("Gender")
+                            .font(.system(size: 20, weight: .bold))
+                    }
+                    
                     Picker("Select Gender", selection: Binding(
                         get: { self.editedData?.gender ?? "" },
                         set: { self.editedData?.gender = $0 }
@@ -209,133 +271,225 @@ struct ProfileView: View {
                         Text("Female").tag("female")
                         Text("Other").tag("other")
                     }
-                    .pickerStyle(MenuPickerStyle())
-                    .padding()
+                    .pickerStyle(SegmentedPickerStyle())
+                    .font(.system(size: 18))
+                    .padding(12)
                     .background(Color(.systemGray6))
-                    .cornerRadius(8)
+                    .cornerRadius(12)
                 }
                 
                 // Weight input
-                VStack(alignment: .leading) {
-                    Text("Weight (kg)")
-                        .font(.headline)
-                    TextField("Weight", text: Binding(
+                editField(
+                    icon: "scalemass.fill",
+                    title: "Weight (kg)",
+                    placeholder: "Your Weight",
+                    keyboardType: .decimalPad,
+                    value: Binding(
                         get: { self.editedData?.weight ?? "" },
                         set: { self.editedData?.weight = $0 }
-                    ))
-                    .keyboardType(.decimalPad)
-                    .padding()
-                    .background(Color(.systemGray6))
-                    .cornerRadius(8)
-                }
+                    )
+                )
                 
                 // Age input
-                VStack(alignment: .leading) {
-                    Text("Age")
-                        .font(.headline)
-                    TextField("Age", text: Binding(
+                editField(
+                    icon: "calendar",
+                    title: "Age",
+                    placeholder: "Your Age",
+                    keyboardType: .numberPad,
+                    value: Binding(
                         get: { self.editedData?.age ?? "" },
                         set: { self.editedData?.age = $0 }
-                    ))
-                    .keyboardType(.numberPad)
-                    .padding()
-                    .background(Color(.systemGray6))
-                    .cornerRadius(8)
-                }
+                    )
+                )
                 
                 // Activity level picker
-                VStack(alignment: .leading) {
-                    Text("Activity Level")
-                        .font(.headline)
-                    Picker("Select Activity Level", selection: Binding(
-                        get: { self.editedData?.activityLevel ?? "" },
-                        set: { self.editedData?.activityLevel = $0 }
-                    )) {
-                        Text("Select Activity Level").tag("")
-                        ForEach(activityLevels, id: \.self) { level in
-                            Text(level).tag(level)
-                        }
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Image(systemName: "figure.walk")
+                            .font(.system(size: 24))
+                            .foregroundColor(.blue)
+                            .frame(width: 36, height: 36)
+                        
+                        Text("Activity Level")
+                            .font(.system(size: 20, weight: .bold))
                     }
-                    .pickerStyle(MenuPickerStyle())
-                    .padding()
-                    .background(Color(.systemGray6))
-                    .cornerRadius(8)
+                    
+                    Menu {
+                        ForEach(activityLevels, id: \.self) { level in
+                            Button(action: {
+                                self.editedData?.activityLevel = level
+                            }) {
+                                Text(level)
+                                    .font(.system(size: 18))
+                            }
+                        }
+                    } label: {
+                        HStack {
+                            Text(editedData?.activityLevel.isEmpty ?? true ? "Select Activity Level" : editedData?.activityLevel ?? "")
+                                .font(.system(size: 18))
+                                .foregroundColor(editedData?.activityLevel.isEmpty ?? true ? .secondary : .primary)
+                            
+                            Spacer()
+                            
+                            Image(systemName: "chevron.down")
+                                .foregroundColor(.blue)
+                        }
+                        .padding()
+                        .background(Color(.systemGray6))
+                        .cornerRadius(12)
+                    }
                 }
                 
                 // Health conditions
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("Health Conditions")
-                        .font(.headline)
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack {
+                        Image(systemName: "heart.text.square.fill")
+                            .font(.system(size: 24))
+                            .foregroundColor(.red)
+                            .frame(width: 36, height: 36)
+                        
+                        Text("Health Conditions")
+                            .font(.system(size: 20, weight: .bold))
+                    }
                     
-                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+                    Text("Tap conditions that apply to you:")
+                        .font(.system(size: 18))
+                        .foregroundColor(.secondary)
+                    
+                    LazyVGrid(columns: [GridItem(.flexible())], spacing: 12) {
                         ForEach(healthConditionOptions, id: \.self) { condition in
                             Button(action: {
                                 toggleHealthCondition(condition)
                             }) {
                                 HStack {
+                                    if editedData?.healthConditions.contains(condition) ?? false {
+                                        Image(systemName: "checkmark.circle.fill")
+                                            .foregroundColor(.white)
+                                            .font(.system(size: 20))
+                                    } else {
+                                        Image(systemName: "circle")
+                                            .foregroundColor(.primary)
+                                            .font(.system(size: 20))
+                                    }
+                                    
                                     Text(condition)
-                                        .font(.subheadline)
+                                        .font(.system(size: 18))
                                         .foregroundColor(editedData?.healthConditions.contains(condition) ?? false ? .white : .primary)
+                                    
                                     Spacer()
                                 }
                                 .padding()
-                                .background(editedData?.healthConditions.contains(condition) ?? false ? Color.blue : Color(.systemGray6))
-                                .cornerRadius(8)
+                                .background(editedData?.healthConditions.contains(condition) ?? false ? Color.red : Color(.systemGray6))
+                                .cornerRadius(12)
                             }
                         }
                     }
                 }
                 
                 // Medications
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("Medications")
-                        .font(.headline)
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack {
+                        Image(systemName: "pills.fill")
+                            .font(.system(size: 24))
+                            .foregroundColor(.blue)
+                            .frame(width: 36, height: 36)
+                        
+                        Text("Medications")
+                            .font(.system(size: 20, weight: .bold))
+                    }
                     
-                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+                    Text("Tap medications that apply to you:")
+                        .font(.system(size: 18))
+                        .foregroundColor(.secondary)
+                    
+                    LazyVGrid(columns: [GridItem(.flexible())], spacing: 12) {
                         ForEach(medicationOptions, id: \.self) { medication in
                             Button(action: {
                                 toggleMedication(medication)
                             }) {
                                 HStack {
+                                    if editedData?.medications.contains(medication) ?? false {
+                                        Image(systemName: "checkmark.circle.fill")
+                                            .foregroundColor(.white)
+                                            .font(.system(size: 20))
+                                    } else {
+                                        Image(systemName: "circle")
+                                            .foregroundColor(.primary)
+                                            .font(.system(size: 20))
+                                    }
+                                    
                                     Text(medication)
-                                        .font(.subheadline)
+                                        .font(.system(size: 18))
                                         .foregroundColor(editedData?.medications.contains(medication) ?? false ? .white : .primary)
+                                    
                                     Spacer()
                                 }
                                 .padding()
                                 .background(editedData?.medications.contains(medication) ?? false ? Color.blue : Color(.systemGray6))
-                                .cornerRadius(8)
+                                .cornerRadius(12)
                             }
                         }
                     }
                 }
                 
                 // Buttons
-                HStack {
+                VStack(spacing: 16) {
+                    Button(action: handleSave) {
+                        HStack {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.system(size: 20))
+                            Text("Save Changes")
+                                .font(.system(size: 20, weight: .bold))
+                        }
+                        .foregroundColor(.white)
+                        .padding()
+                        .frame(maxWidth: .infinity)
+                        .background(Color.blue)
+                        .cornerRadius(12)
+                    }
+                    
                     Button(action: {
                         isEditing = false
                         editedData = profileData
                     }) {
-                        Text("Cancel")
-                            .foregroundColor(.white)
-                            .padding()
-                            .frame(maxWidth: .infinity)
-                            .background(Color.gray)
-                            .cornerRadius(8)
-                    }
-                    
-                    Button(action: handleSave) {
-                        Text("Save Changes")
-                            .foregroundColor(.white)
-                            .padding()
-                            .frame(maxWidth: .infinity)
-                            .background(Color.blue)
-                            .cornerRadius(8)
+                        HStack {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 20))
+                            Text("Cancel")
+                                .font(.system(size: 20, weight: .bold))
+                        }
+                        .foregroundColor(.white)
+                        .padding()
+                        .frame(maxWidth: .infinity)
+                        .background(Color.gray)
+                        .cornerRadius(12)
                     }
                 }
-                .padding(.top, 20)
+                .padding(.top, 32)
             }
-            .padding()
+            .padding(24)
+            // Support for system text size adjustments
+        }
+    }
+    
+    private func editField(icon: String, title: String, placeholder: String, keyboardType: UIKeyboardType = .default, value: Binding<String>) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Image(systemName: icon)
+                    .font(.system(size: 24))
+                    .foregroundColor(.blue)
+                    .frame(width: 36, height: 36)
+                
+                Text(title)
+                    .font(.system(size: 20, weight: .bold))
+            }
+            
+            TextField(placeholder, text: value)
+                .font(.system(size: 18))
+                .keyboardType(keyboardType)
+                .padding()
+                .background(Color(.systemGray6))
+                .cornerRadius(12)
         }
     }
     

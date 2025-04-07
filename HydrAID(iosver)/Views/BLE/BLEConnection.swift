@@ -1,255 +1,277 @@
 import SwiftUI
 import CoreBluetooth
 
+// Extension to add our specific notification
+extension Notification.Name {
+    static let newDeviceDiscovered = Notification.Name("newDeviceDiscovered")
+}
+
+// Extension for BLEManager to add HydrationTracker-specific functionality
+extension BLEManager {
+    func startScanningForDevice(named targetName: String) {
+        // Start scanning as normal
+        startScanning()
+        
+        // Remove existing observers to avoid duplicates
+        NotificationCenter.default.removeObserver(self, name: .bleConnectionChanged, object: nil)
+        
+        // Add a check for the target device in the discovered devices array
+        Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] timer in
+            guard let self = self else {
+                timer.invalidate()
+                return
+            }
+            
+            // If already connected or not scanning, stop timer
+            if self.connectionStatus == .connected || !self.isScanning {
+                timer.invalidate()
+                return
+            }
+            
+            // Look for device with target name
+            if let hydrationTracker = self.discoveredDevices.first(where: {
+                $0.name?.contains(targetName) ?? false
+            }) {
+                // Found target device, connect to it
+                self.connect(to: hydrationTracker)
+                timer.invalidate()
+                self.stopScanning()
+            }
+        }
+    }
+}
+
 struct BLEConnectionView: View {
     @EnvironmentObject var bleManager: BLEManager
-    @State private var showDeviceList = false
+    @State private var isSearching = false
+    
+    // Fixed device name for elderly users
+    private let deviceName = "HydrationTracker"
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Device Connection")
-                .font(.headline)
-            
-            // Connection status
+        VStack(alignment: .leading, spacing: 16) {
+            // Header with device icon
             HStack {
-                Image(systemName: connectionStatusIcon)
+                Image(systemName: "waterbottle.fill")
+                    .font(.system(size: 28))
                     .foregroundColor(connectionStatusColor)
-                    .frame(width: 24, height: 24)
                 
-                Text(connectionStatusText)
-                    .font(.subheadline)
-                
-                Spacer()
-                
-                if bleManager.connectionStatus == .connected {
-                    // Disconnect button
-                    Button(action: {
-                        bleManager.disconnect()
-                    }) {
-                        Text("Disconnect")
-                            .font(.callout)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(Color.red.opacity(0.2))
-                            .foregroundColor(.red)
-                            .cornerRadius(8)
-                    }
-                } else if bleManager.isScanning {
-                    // Cancel scanning button
-                    Button(action: {
-                        bleManager.stopScanning()
-                    }) {
-                        Text("Cancel")
-                            .font(.callout)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(Color.orange.opacity(0.2))
-                            .foregroundColor(.orange)
-                            .cornerRadius(8)
-                    }
-                } else {
-                    // Scan button
-                    Button(action: {
-                        bleManager.startScanning()
-                        showDeviceList = true
-                    }) {
-                        Text("Scan")
-                            .font(.callout)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(Color.blue.opacity(0.2))
-                            .foregroundColor(.blue)
-                            .cornerRadius(8)
-                    }
-                }
+                Text("Your HydrAID Tumbler")
+                    .font(.system(size: 24, weight: .bold))
+                    .foregroundColor(.primary)
             }
             
-            // Show discovered devices when scanning
-            if showDeviceList && bleManager.isScanning || !bleManager.discoveredDevices.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Available Devices:")
-                        .font(.callout)
-                        .foregroundColor(.secondary)
+            // Status card with clear information
+            HStack(spacing: 16) {
+                // Status icon
+                ZStack {
+                    Circle()
+                        .fill(connectionStatusColor.opacity(0.2))
+                        .frame(width: 56, height: 56)
                     
-                    if bleManager.isScanning && bleManager.discoveredDevices.isEmpty {
-                        HStack {
-                            ProgressView()
-                                .padding(.trailing, 4)
-                            Text("Scanning...")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        .padding(.leading, 8)
+                    if bleManager.connectionStatus == .scanning || bleManager.connectionStatus == .connecting {
+                        // Show spinning indicator for active states
+                        ProgressView()
+                            .scaleEffect(1.5)
+                            .progressViewStyle(CircularProgressViewStyle(tint: connectionStatusColor))
+                    } else {
+                        // Show static icon for stable states
+                        Image(systemName: statusIcon)
+                            .font(.system(size: 28))
+                            .foregroundColor(connectionStatusColor)
                     }
+                }
+                
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(statusTitle)
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundColor(.primary)
                     
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 8) {
-                            ForEach(bleManager.discoveredDevices, id: \.identifier) { device in
-                                Button(action: {
-                                    bleManager.connect(to: device)
-                                    showDeviceList = false
-                                }) {
-                                    HStack {
-                                        Image(systemName: "wave.3.right")
-                                            .foregroundColor(.blue)
-                                            .frame(width: 24, height: 24)
-                                        
-                                        Text(device.name ?? "Unknown Device")
-                                            .font(.system(size: 14))
-                                        
-                                        Spacer()
-                                        
-                                        Image(systemName: "chevron.right")
-                                            .font(.caption)
-                                            .foregroundColor(.gray)
-                                    }
-                                    .padding(.vertical, 8)
-                                    .padding(.horizontal, 12)
-                                    .background(Color(.systemGray6))
+                    Text(statusMessage)
+                        .font(.system(size: 18))
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(20)
+            .background(Color(.systemBackground))
+            .cornerRadius(16)
+            .shadow(color: Color.black.opacity(0.05), radius: 2, x: 0, y: 1)
+            
+            // Connection button - single action for connecting/disconnecting
+            Button(action: handleMainAction) {
+                HStack {
+                    Image(systemName: actionButtonIcon)
+                        .font(.system(size: 20))
+                    Text(actionButtonText)
+                        .font(.system(size: 20, weight: .medium))
+                }
+                .foregroundColor(.white)
+                .padding()
+                .frame(maxWidth: .infinity)
+                .background(actionButtonColor)
+                .cornerRadius(12)
+            }
+            .disabled(bleManager.connectionStatus == .connecting || bleManager.connectionStatus == .scanning)
+            .opacity(bleManager.connectionStatus == .connecting || bleManager.connectionStatus == .scanning ? 0.7 : 1)
+            
+            // Only show device info when connected
+            if bleManager.connectionStatus == .connected {
+                VStack(alignment: .leading, spacing: 16) {
+                    Divider()
+                        .padding(.vertical, 8)
+                    
+                    // Battery level
+                    if bleManager.deviceBatteryLevel > 0 {
+                        HStack(spacing: 12) {
+                            // Battery icon
+                            Image(systemName: batteryIcon)
+                                .font(.system(size: 24))
+                                .foregroundColor(batteryColor)
+                            
+                            // Battery percentage
+                            Text("\(bleManager.deviceBatteryLevel)% Battery")
+                                .font(.system(size: 18, weight: .semibold))
+                                .foregroundColor(batteryColor)
+                            
+                            Spacer()
+                            
+                            // Battery indicator
+                            ZStack(alignment: .leading) {
+                                Rectangle()
+                                    .frame(width: 80, height: 16)
+                                    .opacity(0.3)
+                                    .foregroundColor(.gray)
                                     .cornerRadius(8)
-                                }
+                                
+                                Rectangle()
+                                    .frame(width: 80 * CGFloat(bleManager.deviceBatteryLevel) / 100.0, height: 16)
+                                    .foregroundColor(batteryColor)
+                                    .cornerRadius(8)
                             }
                         }
-                        .frame(maxHeight: 200)
-                    }
-                }
-                .padding(.top, 8)
-            }
-            
-            // Device info when connected
-            if bleManager.connectionStatus == .connected, let device = bleManager.connectedDevice {
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        Text("Connected to:")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        
-                        Text(device.name ?? "Unknown Device")
-                            .font(.caption)
-                            .fontWeight(.medium)
                     }
                     
-                    HStack {
-                        Text("Battery:")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        
-                        Text("\(bleManager.deviceBatteryLevel)%")
-                            .font(.caption)
-                            .fontWeight(.medium)
-                        
-                        // Battery level indicator
-                        ZStack(alignment: .leading) {
-                            Rectangle()
-                                .frame(width: 50, height: 8)
-                                .opacity(0.3)
-                                .foregroundColor(.gray)
-                            
-                            Rectangle()
-                                .frame(width: 50 * CGFloat(bleManager.deviceBatteryLevel) / 100.0, height: 8)
-                                .foregroundColor(batteryColor)
+                    // Refresh data button - clear single action
+                    Button(action: {
+                        // Request fresh readings from the device
+                        bleManager.requestCurrentReadings()
+                    }) {
+                        HStack {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.system(size: 20))
+                            Text("Update Readings")
+                                .font(.system(size: 18, weight: .medium))
                         }
-                        .cornerRadius(4)
-                    }
-                    
-                    HStack {
-                        Button(action: {
-                            bleManager.requestCurrentReadings()
-                        }) {
-                            Text("Refresh Data")
-                                .font(.caption)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .background(Color.blue.opacity(0.2))
-                                .foregroundColor(.blue)
-                                .cornerRadius(4)
-                        }
-                        
-                        Button(action: {
-                            bleManager.startContinuousMonitoring(intervalSeconds: 10)
-                        }) {
-                            Text("Start Monitoring")
-                                .font(.caption)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .background(Color.green.opacity(0.2))
-                                .foregroundColor(.green)
-                                .cornerRadius(4)
-                        }
-                        
-                        Button(action: {
-                            bleManager.stopContinuousMonitoring()
-                        }) {
-                            Text("Stop Monitoring")
-                                .font(.caption)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .background(Color.orange.opacity(0.2))
-                                .foregroundColor(.orange)
-                                .cornerRadius(4)
-                        }
+                        .foregroundColor(.blue)
+                        .padding()
+                        .frame(maxWidth: .infinity)
+                        .background(Color.blue.opacity(0.15))
+                        .cornerRadius(12)
                     }
                 }
-                .padding(.top, 8)
             }
         }
-        .padding()
+        .padding(24)
         .background(Color(.systemGray6))
-        .cornerRadius(12)
+        .cornerRadius(16)
+        .shadow(color: Color.black.opacity(0.1), radius: 4, x: 0, y: 2)
         .onAppear {
-            // Auto-start scanning if no device is connected
-            if bleManager.connectionStatus == .disconnected && !bleManager.isScanning {
+            // Auto-connect on appear if not already connected
+            if bleManager.connectionStatus == .disconnected && !isSearching {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-                    bleManager.startScanning()
-                    showDeviceList = true
+                    startSearching()
                 }
             }
         }
     }
     
-    // Helper computed properties for status display
-    private var connectionStatusText: String {
-        switch bleManager.connectionStatus {
-        case .disconnected:
-            return "Disconnected"
-        case .scanning:
-            return "Scanning..."
-        case .connecting:
-            return "Connecting..."
-        case .connected:
-            return "Connected"
-        case .failed(let message):
-            return "Failed: \(message)"
-        }
-    }
-    
-    private var connectionStatusIcon: String {
-        switch bleManager.connectionStatus {
-        case .disconnected:
-            return "wifi.slash"
-        case .scanning:
-            return "wifi.exclamationmark"
-        case .connecting:
-            return "wifi"
-        case .connected:
-            return "wifi.circle.fill"
-        case .failed:
-            return "xmark.circle"
-        }
-    }
+    // MARK: - Helper Properties
     
     private var connectionStatusColor: Color {
         switch bleManager.connectionStatus {
-        case .disconnected:
-            return .gray
-        case .scanning:
-            return .orange
-        case .connecting:
-            return .blue
         case .connected:
             return .green
+        case .connecting, .scanning:
+            return .blue
+        case .disconnected:
+            return .gray
         case .failed:
             return .red
+        }
+    }
+    
+    private var statusIcon: String {
+        switch bleManager.connectionStatus {
+        case .connected:
+            return "checkmark.circle.fill"
+        case .connecting, .scanning:
+            return "arrow.clockwise"
+        case .disconnected:
+            return "wifi.slash"
+        case .failed:
+            return "exclamationmark.circle.fill"
+        }
+    }
+    
+    private var statusTitle: String {
+        switch bleManager.connectionStatus {
+        case .connected:
+            return "Device Connected"
+        case .connecting:
+            return "Connecting..."
+        case .scanning:
+            return "Searching..."
+        case .disconnected:
+            return "Not Connected"
+        case .failed:
+            return "Connection Failed"
+        }
+    }
+    
+    private var statusMessage: String {
+        switch bleManager.connectionStatus {
+        case .connected:
+            return "Your HydrAID Tumbler is connected and sending data."
+        case .connecting:
+            return "Connecting to your HydrAID Tumbler..."
+        case .scanning:
+            return "Looking for your HydrAID Tumbler. Make sure it's turned on and nearby."
+        case .disconnected:
+            return "Press the button below to connect to your HydrAID Tumbler."
+        case .failed(let message):
+            return "Error: \(message). Try again."
+        }
+    }
+    
+    private var actionButtonText: String {
+        switch bleManager.connectionStatus {
+        case .connected:
+            return "Disconnect Device"
+        case .connecting, .scanning:
+            return "Searching..."
+        case .disconnected, .failed:
+            return "Connect to HydrAID Tumbler"
+        }
+    }
+    
+    private var actionButtonIcon: String {
+        switch bleManager.connectionStatus {
+        case .connected:
+            return "xmark.circle.fill"
+        case .connecting, .scanning:
+            return "arrow.clockwise"
+        case .disconnected, .failed:
+            return "link.circle.fill"
+        }
+    }
+    
+    private var actionButtonColor: Color {
+        switch bleManager.connectionStatus {
+        case .connected:
+            return .red
+        case .connecting, .scanning, .disconnected, .failed:
+            return .blue
         }
     }
     
@@ -262,12 +284,43 @@ struct BLEConnectionView: View {
             return .red
         }
     }
-}
-
-struct BLEConnectionView_Previews: PreviewProvider {
-    static var previews: some View {
-        BLEConnectionView()
-            .environmentObject(BLEManager())
-            .padding()
+    
+    private var batteryIcon: String {
+        if bleManager.deviceBatteryLevel > 70 {
+            return "battery.100"
+        } else if bleManager.deviceBatteryLevel > 30 {
+            return "battery.50"
+        } else {
+            return "battery.25"
+        }
+    }
+    
+    // MARK: - Actions
+    
+    private func handleMainAction() {
+        switch bleManager.connectionStatus {
+        case .connected:
+            bleManager.disconnect()
+        case .disconnected, .failed:
+            startSearching()
+        default:
+            // Do nothing during connecting/scanning states
+            break
+        }
+    }
+    
+    private func startSearching() {
+        isSearching = true
+        
+        // Use the extension method to scan specifically for the HydrationTracker
+        bleManager.startScanningForDevice(named: deviceName)
+        
+        // Auto-stop searching after 30 seconds if nothing found
+        DispatchQueue.main.asyncAfter(deadline: .now() + 30) {
+            if bleManager.connectionStatus != .connected {
+                bleManager.stopScanning()
+                isSearching = false
+            }
+        }
     }
 }

@@ -22,6 +22,10 @@ struct LoginView: View {
     
     var body: some View {
         VStack(spacing: 20) {
+            Image("HydrAIDlogo")
+                .resizable()
+                .frame(width: 150, height: 150)
+            
             Text("HydrAID")
                 .font(.largeTitle)
                 .fontWeight(.bold)
