@@ -191,18 +191,19 @@ struct HomeView: View {
         isLoading = false
     }
     
+    
     private func loadUserData() {
         guard let user = Auth.auth().currentUser else { return }
         
-        // Get display name or email prefix
+        // Explicitly load profile data first
+        loadProfileData()
+        
+        // We'll set a fallback name from Auth just in case profile data isn't loaded yet
         if let displayName = user.displayName, !displayName.isEmpty {
             userName = displayName
         } else if let email = user.email, !email.isEmpty {
             userName = email.components(separatedBy: "@").first ?? "User"
         }
-        
-        // Explicitly load profile data
-        loadProfileData()
     }
     
     private func loadWeatherData() {
@@ -261,6 +262,10 @@ struct HomeView: View {
             print("Activity Level: \(profile.activityLevel)")
             print("Health Conditions: \(profile.healthConditions)")
             print("Medications: \(profile.medications)")
+            
+            if !profile.name.isEmpty {
+                self.userName = profile.name
+            }
             
             // Update profileData and trigger recommendations recalculation
             self.profileData = profile
