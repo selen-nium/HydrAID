@@ -293,13 +293,8 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
         
         let updateCommand = """
         {
-            "command": "update_optimal",
-            "water": {
-                "max": \(waterMilliliters)
-            },
-            "sugar": {
-                "max": \(sugarGrams)
-            }
+            "hydration":\(waterMilliliters),
+            "sugar":\(sugarGrams)
         }
         """
         self.sendMessage(updateCommand)
@@ -308,7 +303,13 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
         print("Water: \(waterMilliliters) ml")
         print("Sugar: \(sugarGrams) g")
     }
-    
+//    "hydration:[value]" - Updates MAX_HYDRATION_WEIGHT
+//    "sugar=[value]" - Updates MAX_SUGAR_WEIGHT
+//    "sugar=[value]" - Adds sugar intake
+//    "getData" - Requests current data
+//    "resetHydration" - Resets hydration to 0
+//    "resetSugar" - Resets sugar to 0
+//    
     // Schedule daily update for a specific time (23:59 by default)
     func scheduleDailyUpdate(hour: Int = 23, minute: Int = 59) {
         // Cancel any existing timer

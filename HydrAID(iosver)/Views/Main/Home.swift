@@ -352,46 +352,51 @@ struct HomeView: View {
     }
     
     private func processBLEMessage(_ message: String) {
-        print("Processing BLE message: \(message)")
-        
-        do {
-            if let data = message.data(using: .utf8),
-               let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] {
+    print("Processing BLE message: \(message)")
+    
+    do {
+        if let data = message.data(using: .utf8),
+           let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            
+            // Check if this is a hydration/sugar reading
+            if let hydration = json["hydration"] as? [String: Any],
+               let sugar = json["sugar"] as? [String: Any] {
                 
-                // Check if this is a hydration/sugar reading
-                if let hydration = json["hydration"] as? [String: Any],
-                   let sugar = json["sugar"] as? [String: Any] {
+                // Update hydration data
+                if let weight = hydration["weight"] as? Double,
+                   let max = hydration["max"] as? Double {
                     
-                    // Update hydration data
-                    if let percentage = hydration["percentage"] as? Double,
-                       let weight = hydration["weight"] as? Double,
-                       let max = hydration["max"] as? Double {
-                        
-                        self.sensorData.hydration = SensorData.HydrationData(
-                            percentage: percentage,
-                            weight: weight,
-                            max: max
-                        )
-                    }
+                    // Calculate percentage correctly as (current/goal)*100
+                    let percentage = min((weight / max) * 100, 100)
                     
-                    // Update sugar data
-                    if let percentage = sugar["percentage"] as? Double,
-                       let weight = sugar["weight"] as? Double,
-                       let max = sugar["max"] as? Double {
-                        
-                        self.sensorData.sugar = SensorData.SugarData(
-                            percentage: percentage,
-                            weight: weight,
-                            max: max
-                        )
-                    }
-                    
-                    print("Updated sensor data: Hydration: \(self.sensorData.hydration.weight)ml, Sugar: \(self.sensorData.sugar.weight)g")
+                    self.sensorData.hydration = SensorData.HydrationData(
+                        percentage: percentage,
+                        weight: weight,
+                        max: max
+                    )
                 }
+                
+                // Update sugar data
+                if let weight = sugar["weight"] as? Double,
+                   let max = sugar["max"] as? Double {
+                    
+                    // Calculate percentage correctly as (current/limit)*100
+                    // This will exceed 100% when over the limit
+                    let percentage = (weight / max) * 100
+                    
+                    self.sensorData.sugar = SensorData.SugarData(
+                        percentage: percentage,
+                        weight: weight,
+                        max: max
+                    )
+                }
+                
+                print("Updated sensor data: Hydration: \(self.sensorData.hydration.weight)ml (\(self.sensorData.hydration.percentage)%), Sugar: \(self.sensorData.sugar.weight)g (\(self.sensorData.sugar.percentage)%)")
             }
-        } catch {
-            print("Error parsing BLE message: \(error)")
         }
+    } catch {
+        print("Error parsing BLE message: \(error)")
+    }
     }
     
     private func updateOptimalIntakeLevels() {
@@ -400,6 +405,10 @@ struct HomeView: View {
             waterLiters: recommendations.water.recommendedLiters,
             sugarGrams: recommendations.sugar.recommendedGrams
         )
+        
+        // Also ensure your SensorData model is set up with the right max values
+        sensorData.hydration.max = recommendations.water.recommendedLiters * 1000
+        sensorData.sugar.max = recommendations.sugar.recommendedGrams
         
         print("🔄 Updated optimal intake levels on ESP32:")
         print("Water: \(recommendations.water.recommendedLiters) L")
@@ -463,51 +472,113 @@ struct HydrationTrackerViewBLE: View {
                     .font(.system(size: 24, weight: .bold))
                     .foregroundColor(.textPrimary)
             }
-            .padding(.bottom, 4)
-            
-            // Current status with large text
-            HStack(alignment: .firstTextBaseline) {
-                Text("\(Int(sensorData.weight))")
-                    .font(.system(size: 40, weight: .bold))
-                    .foregroundColor(.textPrimary)
-                    .accessibility(label: Text("\(Int(sensorData.weight)) milliliters consumed"))
-                
-                Text("ml")
-                    .font(.system(size: 28, weight: .semibold))
-                    .foregroundColor(.textPrimary)
-            }
-            
-            // Goal with larger text
-            HStack {
-                Text("Daily Goal:")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundColor(.textPrimary)
-                
-                Text("\(Int(recommendedIntake * 1000)) ml")
-                    .font(.system(size: 18, weight: .bold))
-                    .foregroundColor(.hydrationBlue)
-            }
             .padding(.bottom, 8)
             
-            // Taller progress bar
-            GeometryReader { geometry in
-                ZStack(alignment: .leading) {
-                    // Background bar
-                    Rectangle()
-                        .frame(width: geometry.size.width, height: 24)
-                        .foregroundColor(Color.hydrationBlue.opacity(0.3))
-                        .cornerRadius(12)
+            // Visual Water Level Indicator
+            HStack(alignment: .center, spacing: 20) {
+                // Circular progress indicator with water glass metaphor
+                ZStack {
+                    // Outer circle background
+                    Circle()
+                        .stroke(Color.hydrationBlue.opacity(0.2), lineWidth: 12)
+                        .frame(width: 150, height: 150)
                     
-                    // Filled progress
-                    Rectangle()
-                        .frame(width: min(CGFloat(sensorData.percentage / 100) * geometry.size.width, geometry.size.width), height: 24)
-                        .foregroundColor(.hydrationBlue)
-                        .cornerRadius(12)
+                    // Progress arc
+                    Circle()
+                        .trim(from: 0, to: CGFloat(min(sensorData.percentage / 100, 1.0)))
+                        .stroke(Color.hydrationBlue, style: StrokeStyle(lineWidth: 12, lineCap: .round))
+                        .frame(width: 150, height: 150)
+                        .rotationEffect(.degrees(-90))
                         .animation(.easeInOut(duration: 1), value: sensorData.percentage)
+                    
+                    // Water glass icon in the middle
+                    VStack(spacing: 5) {
+                        Image(systemName: "drop.fill")
+                            .font(.system(size: 36))
+                            .foregroundColor(.hydrationBlue)
+                        
+                        Text("\(Int(sensorData.percentage))%")
+                            .font(.system(size: 28, weight: .bold))
+                            .foregroundColor(.textPrimary)
+                    }
                 }
+                .padding(12)
+                
+                // Text information
+                VStack(alignment: .leading, spacing: 12) {
+                    // Current consumption
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Current")
+                            .font(.system(size: 16))
+                            .foregroundColor(.secondary)
+                        
+                        HStack(alignment: .firstTextBaseline, spacing: 2) {
+                            // Container for number with right alignment
+                            Text("\(Int(sensorData.weight))")
+                                .font(.system(size: 20, weight: .bold))
+                                .foregroundColor(.textPrimary)
+                                .frame(minWidth: 60, alignment: .trailing)
+                                .lineLimit(1)
+                            
+                            // Unit with consistent spacing
+                            Text("ml")
+                                .font(.system(size: 22))
+                                .foregroundColor(.textPrimary)
+                                .fixedSize()
+                        }
+                    }
+                    
+                    // Goal consumption
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Goal")
+                            .font(.system(size: 16))
+                            .foregroundColor(.secondary)
+                        
+                        HStack(alignment: .firstTextBaseline, spacing: 2) {
+                            // Container for number with right alignment
+                            Text("\(Int(recommendedIntake * 1000))")
+                                .font(.system(size: 20, weight: .bold))
+                                .foregroundColor(.hydrationBlue)
+                                .frame(minWidth: 60, alignment: .trailing)
+                                .lineLimit(1)
+                            
+                            // Unit with consistent spacing
+                            Text("ml")
+                                .font(.system(size: 20))
+                                .foregroundColor(.hydrationBlue)
+                                .fixedSize()
+                        }
+                    }
+                    
+                    // Remaining
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Remaining")
+                            .font(.system(size: 16))
+                            .foregroundColor(.secondary)
+                        
+                        HStack(alignment: .firstTextBaseline, spacing: 2) {
+                            let remaining = max(0, (recommendedIntake * 1000) - sensorData.weight)
+                            
+                            // Container for number with right alignment
+                            Text("\(Int(remaining))")
+                                .font(.system(size: 20, weight: .bold))
+                                .foregroundColor(remaining > 0 ? .textPrimary : .successGreen)
+                                .frame(minWidth: 60, alignment: .trailing)
+                                .lineLimit(1)
+                            
+                            // Unit with consistent spacing
+                            Text("ml")
+                                .font(.system(size: 20))
+                                .foregroundColor(remaining > 0 ? .textPrimary : .successGreen)
+                                .fixedSize()
+                        }
+                    }
+                }
+                .padding(.leading, 8)
             }
-            .frame(height: 24)
-            .padding(.bottom, 12)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+            // Removed water bottle visualization
             
             // Status message in larger text with icon
             HStack(alignment: .center, spacing: 12) {
@@ -517,40 +588,58 @@ struct HydrationTrackerViewBLE: View {
                 Text(statusMessage)
                     .font(.system(size: 20))
                     .foregroundColor(statusColor)
-                    .fixedSize(horizontal: false, vertical: true) // Allows proper text wrapping
+                    .fixedSize(horizontal: false, vertical: true)
             }
             .padding(.vertical, 8)
             
-            // Adjustment factors in more readable format
+            // Using the dropdown component for adjustment factors
             if !adjustmentFactors.isEmpty {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Why this recommendation:")
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundColor(.textPrimary)
-                    
-                    ForEach(adjustmentFactors, id: \.self) { factor in
-                        HStack(alignment: .top, spacing: 10) {
-                            Text("•")
-                                .font(.system(size: 18))
-                                .foregroundColor(.hydrationBlue)
-                            Text(factor)
-                                .font(.system(size: 18))
-                                .foregroundColor(.textPrimary)
-                                .fixedSize(horizontal: false, vertical: true)
+                DropdownSection(title: "Why this recommendation", accentColor: .hydrationBlue) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        ForEach(adjustmentFactors, id: \.self) { factor in
+                            HStack(alignment: .top, spacing: 10) {
+                                Text("•")
+                                    .font(.system(size: 18))
+                                    .foregroundColor(.hydrationBlue)
+                                Text(factor)
+                                    .font(.system(size: 18))
+                                    .foregroundColor(.textPrimary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            .padding(.vertical, 2)
                         }
-                        .padding(.vertical, 2)
                     }
                 }
-                .padding(.top, 8)
             }
+            
+            // Quick Hydration Tips
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Quick Tips")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundColor(.textPrimary)
+                
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: "lightbulb.fill")
+                        .foregroundColor(.hydrationBlue)
+                    Text("Drink a glass of water with each meal and between meals.")
+                        .font(.system(size: 16))
+                        .foregroundColor(.textPrimary)
+                }
+                .padding(.vertical, 2)
+            }
+            .padding(.top, 8)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 12)
+            .background(Color.hydrationBlue.opacity(0.1))
+            .cornerRadius(12)
         }
         .padding(24)
         .background(Color.cardBackground)
         .cornerRadius(16)
         .shadow(color: Color.black.opacity(0.1), radius: 4, x: 0, y: 2)
-        .accessibilityElement(children: .combine)
-        .accessibility(hint: Text("Shows your water intake progress"))
     }
+    
+    // Water bottle visualization removed
     
     // Status messaging
     private var statusMessage: String {
@@ -593,6 +682,7 @@ struct HydrationTrackerViewBLE: View {
 
 // MARK: - Elderly-Friendly Sugar Tracker
 
+// Completely revised gauge implementation
 struct SugarIntakeTrackerViewBLE: View {
     let recommendedLimit: Double
     let adjustmentFactors: [String]
@@ -609,51 +699,137 @@ struct SugarIntakeTrackerViewBLE: View {
                     .font(.system(size: 24, weight: .bold))
                     .foregroundColor(.textPrimary)
             }
-            .padding(.bottom, 4)
-            
-            // Current status with large text
-            HStack(alignment: .firstTextBaseline) {
-                Text("\(Int(sensorData.weight))")
-                    .font(.system(size: 40, weight: .bold))
-                    .foregroundColor(.textPrimary)
-                    .accessibility(label: Text("\(Int(sensorData.weight)) grams consumed"))
-                
-                Text("g")
-                    .font(.system(size: 28, weight: .semibold))
-                    .foregroundColor(.textPrimary)
-            }
-            
-            // Limit with larger text
-            HStack {
-                Text("Daily Limit:")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundColor(.textPrimary)
-                
-                Text("\(Int(recommendedLimit)) g")
-                    .font(.system(size: 18, weight: .bold))
-                    .foregroundColor(.sugarOrange)
-            }
             .padding(.bottom, 8)
             
-            // Taller progress bar
-            GeometryReader { geometry in
-                ZStack(alignment: .leading) {
-                    // Background bar
-                    Rectangle()
-                        .frame(width: geometry.size.width, height: 24)
-                        .foregroundColor(Color.sugarOrange.opacity(0.3))
-                        .cornerRadius(12)
+            // New simplified visualization with horizontal bar and values
+            VStack(spacing: 24) {
+                // Current sugar level display
+                HStack(alignment: .center) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Current")
+                            .font(.system(size: 16))
+                            .foregroundColor(.secondary)
+                        
+                        HStack(alignment: .firstTextBaseline, spacing: 4) {
+                            Text("\(Int(sensorData.weight))")
+                                .font(.system(size: 32, weight: .bold))
+                                .foregroundColor(statusColor)
+                                .fixedSize()
+                            
+                            Text("g")
+                                .font(.system(size: 22))
+                                .foregroundColor(statusColor)
+                                .fixedSize()
+                        }
+                    }
                     
-                    // Filled progress
-                    Rectangle()
-                        .frame(width: min(CGFloat(sensorData.percentage / 100) * geometry.size.width, geometry.size.width), height: 24)
-                        .foregroundColor(sensorData.percentage > 100 ? .warningRed : .sugarOrange)
-                        .cornerRadius(12)
-                        .animation(.easeInOut(duration: 1), value: sensorData.percentage)
+                    Spacer()
+                    
+                    // Circular percentage indicator
+                    ZStack {
+                        Circle()
+                            .stroke(statusColor.opacity(0.3), lineWidth: 10)
+                            .frame(width: 80, height: 80)
+                        
+                        Circle()
+                            .trim(from: 0, to: CGFloat(min(sensorData.percentage / 100, 1.0)))
+                            .stroke(statusColor, style: StrokeStyle(lineWidth: 10, lineCap: .round))
+                            .frame(width: 80, height: 80)
+                            .rotationEffect(.degrees(-90))
+                            .animation(.easeInOut(duration: 1), value: sensorData.percentage)
+                        
+                        VStack(spacing: 0) {
+                            Text("\(Int(sensorData.percentage))")
+                                .font(.system(size: 24, weight: .bold))
+                                .foregroundColor(statusColor)
+                            
+                            Text("%")
+                                .font(.system(size: 16))
+                                .foregroundColor(statusColor)
+                        }
+                    }
+                }
+                .padding(.bottom, 8)
+                
+                // Sugar level bar visualization
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("Daily Limit: \(Int(recommendedLimit))g")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundColor(.textPrimary)
+                        
+                        Spacer()
+                        
+                        Text("Remaining: \(Int(max(0, recommendedLimit - sensorData.weight)))g")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundColor(statusColor)
+                    }
+                    
+                    // Sugar bar with segments
+                    GeometryReader { geometry in
+                        ZStack(alignment: .leading) {
+                            // Background segments
+                            HStack(spacing: 0) {
+                                Rectangle()
+                                    .fill(Color.successGreen.opacity(0.3))
+                                    .frame(width: geometry.size.width * 0.5)
+                                
+                                Rectangle()
+                                    .fill(Color.yellow.opacity(0.3))
+                                    .frame(width: geometry.size.width * 0.25)
+                                
+                                Rectangle()
+                                    .fill(Color.sugarOrange.opacity(0.3))
+                                    .frame(width: geometry.size.width * 0.25)
+                            }
+                            .frame(height: 24)
+                            .cornerRadius(12)
+                            
+                            // Filled portion (capped at width of bar for display)
+                            Rectangle()
+                                .fill(filledBarGradient)
+                                .frame(width: min(CGFloat(sensorData.percentage / 100) * geometry.size.width, geometry.size.width), height: 24)
+                                .cornerRadius(12)
+                                .animation(.easeInOut(duration: 1), value: sensorData.percentage)
+                            
+                            // Add an indicator for exceeding limit if over 100%
+                            if sensorData.percentage > 100 {
+                                HStack {
+                                    Spacer()
+                                    Image(systemName: "exclamationmark.triangle.fill")
+                                        .foregroundColor(.white)
+                                        .font(.system(size: 20))
+                                        .padding(.trailing, 8)
+                                }
+                                .frame(width: geometry.size.width, height: 24)
+                            }
+                        }
+                    }
+                    .frame(height: 24)
+                    
+                    // Labels for the segments
+                    HStack(spacing: 0) {
+                        Text("Safe")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(.successGreen)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                        
+                        Text("Moderate")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(.yellow)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                        
+                        Text("Limit")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(.sugarOrange)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                    }
                 }
             }
-            .frame(height: 24)
-            .padding(.bottom, 12)
+            .padding(16)
+            .background(Color.cardBackground)
+            .cornerRadius(16)
+            .shadow(color: Color.black.opacity(0.05), radius: 2, x: 0, y: 1)
             
             // Status message in larger text with icon
             HStack(alignment: .center, spacing: 12) {
@@ -663,40 +839,89 @@ struct SugarIntakeTrackerViewBLE: View {
                 Text(statusMessage)
                     .font(.system(size: 20))
                     .foregroundColor(statusColor)
-                    .fixedSize(horizontal: false, vertical: true) // Allows proper text wrapping
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            .padding(.vertical, 8)
+            .padding(.vertical, 12)
+            .padding(.horizontal, 16)
+            .background(statusColor.opacity(0.1))
+            .cornerRadius(12)
             
-            // Adjustment factors in more readable format
+            // Using the dropdown component for adjustment factors
             if !adjustmentFactors.isEmpty {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Why this recommendation:")
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundColor(.textPrimary)
-                    
-                    ForEach(adjustmentFactors, id: \.self) { factor in
-                        HStack(alignment: .top, spacing: 10) {
-                            Text("•")
-                                .font(.system(size: 18))
-                                .foregroundColor(.sugarOrange)
-                            Text(factor)
-                                .font(.system(size: 18))
-                                .foregroundColor(.textPrimary)
-                                .fixedSize(horizontal: false, vertical: true)
+                DropdownSection(title: "Why this recommendation", accentColor: .sugarOrange) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        ForEach(adjustmentFactors, id: \.self) { factor in
+                            HStack(alignment: .top, spacing: 10) {
+                                Text("•")
+                                    .font(.system(size: 18))
+                                    .foregroundColor(.sugarOrange)
+                                Text(factor)
+                                    .font(.system(size: 18))
+                                    .foregroundColor(.textPrimary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            .padding(.vertical, 2)
                         }
-                        .padding(.vertical, 2)
                     }
                 }
-                .padding(.top, 8)
             }
+            
+            // Quick Sugar Tips
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Health Tip")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundColor(.textPrimary)
+                
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: "heart.fill")
+                        .foregroundColor(.warningRed)
+                    Text("Choose water, tea or coffee without sugar to reduce your daily sugar intake.")
+                        .font(.system(size: 16))
+                        .foregroundColor(.textPrimary)
+                }
+                .padding(.vertical, 2)
+            }
+            .padding(.top, 8)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 12)
+            .background(Color.sugarOrange.opacity(0.1))
+            .cornerRadius(12)
         }
         .padding(24)
         .background(Color.cardBackground)
         .cornerRadius(16)
         .shadow(color: Color.black.opacity(0.1), radius: 4, x: 0, y: 2)
-        .accessibilityElement(children: .combine)
-        .accessibility(hint: Text("Shows your sugar intake progress"))
     }
+    
+    // Gradient for the filled bar
+    private var filledBarGradient: LinearGradient {
+       if sensorData.percentage > 100 {
+           // Use warning red for over limit
+           return LinearGradient(
+               gradient: Gradient(colors: [.sugarOrange, .warningRed]),
+               startPoint: .leading,
+               endPoint: .trailing
+           )
+       } else if sensorData.percentage > 75 {
+           return LinearGradient(
+               gradient: Gradient(colors: [.yellow, .sugarOrange]),
+               startPoint: .leading,
+               endPoint: .trailing
+           )
+       } else if sensorData.percentage > 50 {
+           return LinearGradient(
+               gradient: Gradient(colors: [.successGreen, .yellow]),
+               startPoint: .leading,
+               endPoint: .trailing
+           )
+       } else {
+           return LinearGradient(
+               gradient: Gradient(colors: [.successGreen]),
+               startPoint: .leading,
+               endPoint: .trailing
+           )
+       }
+   }
     
     // Status messaging
     private var statusMessage: String {
@@ -718,6 +943,9 @@ struct SugarIntakeTrackerViewBLE: View {
         } else if sensorData.percentage >= 75 {
             return Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundColor(.sugarOrange)
+        } else if sensorData.percentage >= 50 {
+            return Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundColor(.yellow)
         } else {
             return Image(systemName: "checkmark.circle.fill")
                 .foregroundColor(.successGreen)
@@ -729,12 +957,13 @@ struct SugarIntakeTrackerViewBLE: View {
             return .warningRed
         } else if sensorData.percentage >= 75 {
             return .sugarOrange
+        } else if sensorData.percentage >= 50 {
+            return .yellow
         } else {
             return .successGreen
         }
     }
 }
-
 
 struct WeatherInfoView: View {
     let weatherData: WeatherData?
@@ -891,5 +1120,35 @@ struct HomeView_Previews: PreviewProvider {
         HomeView()
             .environmentObject(AuthenticationService())
             .environmentObject(BLEManager())
+    }
+}
+
+struct Arc: Shape {
+    var startAngle: Angle
+    var endAngle: Angle
+    var clockwise: Bool
+
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let center = CGPoint(x: rect.midX, y: rect.midY)
+        let radius = min(rect.width, rect.height) / 2
+        
+        path.addArc(center: center, radius: radius, startAngle: startAngle, endAngle: endAngle, clockwise: clockwise)
+        
+        return path
+    }
+}
+
+// Triangle shape for the marker
+struct Triangle: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        
+        path.move(to: CGPoint(x: rect.midX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+        path.closeSubpath()
+        
+        return path
     }
 }
