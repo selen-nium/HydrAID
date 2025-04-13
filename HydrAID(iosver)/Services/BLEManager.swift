@@ -363,11 +363,24 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
         }
     }
     
+    // send reset command to esp32
+    func sendResetCommand() {
+        let resetCommand = """
+        {
+            "resetHydration": 1,
+            "resetSugar": 1
+        }
+        """
+        self.sendMessage(resetCommand)
+        print("Reset command sent to device")
+    }
+    
     // Get device battery level
     func requestBatteryLevel() {
         let batteryCommand = "{\"command\":\"get_battery\"}"
         self.sendMessage(batteryCommand)
     }
+    
     
     // Get device information
     func requestDeviceInfo() {

@@ -196,6 +196,22 @@ struct BLEConnectionView: View {
                         .cornerRadius(12)
                     }
                     .padding(.top, 8)
+                    
+                    // NEW BUTTON: Reset Device
+                    Button(action: sendResetCommand) {
+                        HStack {
+                            Image(systemName: "arrow.counterclockwise")
+                                .font(.system(size: 20))
+                            Text("Reset Device")
+                                .font(.system(size: 18, weight: .medium))
+                        }
+                        .foregroundColor(.orange)
+                        .padding()
+                        .frame(maxWidth: .infinity)
+                        .background(Color.orange.opacity(0.15))
+                        .cornerRadius(12)
+                    }
+                    .padding(.top, 8)
                 }
             }
         }
@@ -360,6 +376,16 @@ struct BLEConnectionView: View {
                 isSearching = false
             }
         }
+    }
+    
+    // NEW METHOD: Send reset command to device
+    private func sendResetCommand() {
+        bleManager.sendResetCommand()
+        
+        // Show confirmation to user
+        self.alertTitle = "Reset Sent"
+        self.alertMessage = "Reset command has been sent to your HydrAID Tumbler."
+        self.showAlert = true
     }
     
     // Fetch profile data from Firebase
