@@ -375,6 +375,17 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
         print("Reset command sent to device")
     }
     
+    // send tare command to esp32
+    func sendTareCommand() {
+        let tareCommand = """
+        {
+            "tareScale": 1
+        }
+        """
+        self.sendMessage(tareCommand)
+        print("Tare command sent to device")
+    }
+    
     // Get device battery level
     func requestBatteryLevel() {
         let batteryCommand = "{\"command\":\"get_battery\"}"

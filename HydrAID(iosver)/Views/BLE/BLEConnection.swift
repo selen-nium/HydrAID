@@ -211,6 +211,21 @@ struct BLEConnectionView: View {
                         .background(Color.orange.opacity(0.15))
                         .cornerRadius(12)
                     }
+                    
+                    // new tare button
+                    Button(action: sendTareCommand) {
+                        HStack {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.system(size: 20))
+                            Text("Tare Scale")
+                                .font(.system(size: 18, weight: .medium))
+                        }
+                        .foregroundColor(.orange)
+                        .padding()
+                        .frame(maxWidth: .infinity)
+                        .background(Color.orange.opacity(0.15))
+                        .cornerRadius(12)
+                    }
                     .padding(.top, 8)
                 }
             }
@@ -387,6 +402,17 @@ struct BLEConnectionView: View {
         self.alertMessage = "Reset command has been sent to your HydrAID Tumbler."
         self.showAlert = true
     }
+    
+    // NEW METHOD: Send tare command to device
+    private func sendTareCommand() {
+        bleManager.sendTareCommand()
+        
+        // Show confirmation to user
+        self.alertTitle = "Tare Sent"
+        self.alertMessage = "Tare command has been sent to your HydrAID Tumbler."
+        self.showAlert = true
+    }
+
     
     // Fetch profile data from Firebase
     private func fetchProfileData() {
